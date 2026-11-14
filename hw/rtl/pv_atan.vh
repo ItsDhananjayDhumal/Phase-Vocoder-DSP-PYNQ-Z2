@@ -1,5 +1,3 @@
-// atan(2^-i) / (2*pi) * 2^32, i.e. CORDIC micro-rotation angles as 32-bit binary
-// angles. Generated from model/pv_params.py:atan_table().
 function [31:0] atan_bam;
     input integer i;
     begin

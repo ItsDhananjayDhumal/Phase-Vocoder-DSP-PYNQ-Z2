@@ -1,34 +1,6 @@
 `timescale 1ns / 1ps
 `default_nettype none
-// ============================================================================
-// pv_audio_top: the PL "DSP core" of the Gaydecki-style platform.
-//
-//   ADAU1761 --I2S--> source mux --> pv_core (phase vocoder) --> gain/mute --I2S--> ADAU1761
-//                      ^  (codec ADC or DMA MM2S file stream)          |
-//                      |                                               +--> DMA S2MM capture
-//   PS (Python/GUI) --AXI-Lite--> control registers, tuning table, EQ bins
-//
-// Used as a block-design module reference; the AXI4-Lite and AXI4-Stream
-// interfaces are inferred from the port names.
-//
-// Register map (byte offsets), documented for software in sw/pynq/pv_regs.py:
-//   0x00 CTRL        [0] dsp_en [1] autotune [2] src_dma [3] eq_en [4] gate_en
-//                    [5] mute [7:6] in_ch (0=L+R 1=L 2=R) [8] soft_reset (pulse)
-//                    [9] capture_arm (pulse) [10] capture_waits_for_dma
-//   0x04 STATUS      [0] codec_alive [1] voiced [2] capture_busy [3] core_busy
-//                    [4] primed [5] mm2s_data_waiting
-//   0x08 SAMPLE_CNT  0x0C FRAME_CNT
-//   0x10 MANUAL_RATIO Q16.16   0x14 ALPHA Q0.16      0x18 PEAK_THR Q0.16
-//   0x1C VOICE_THR            0x20 GATE_THR          0x24 OUT_GAIN Q2.14
-//   0x28 KRANGE {kmax[26:16], kmin[10:0]}            0x2C NOTE_CNT
-//   0x30 DET_F0  0x34 DET_TARGET (Q.14 bins)  0x38 DET_RATIO Q16.16
-//   0x3C LEVELS {out_peak[31:16], in_peak[15:0]}     0x40 CAPTURE_LEN
-//   0x44 UNDERFLOW_CNT  0x48 DMA_IN_CNT  0x4C DMA_STARVE_CNT  0x50 CAPTURE_CNT
-//   0x54 DET_LEVEL  0x58 DET_BIN  0x5C OVERRUN_CNT  0x60 RAW_L  0x64 RAW_R
-//   0x68 CAPTURE_DROP  0x7C VERSION
-//   0x1000-0x13FC note table: word 2i = note (Q.14 bins), word 2i+1 = upper bound
-//   0x2000-0x3FFC EQ gain per bin, Q2.14 (bins 0..N/2 used)
-// ============================================================================
+
 module pv_audio_top #(
     parameter LOGN = 11
 )(
@@ -60,14 +32,14 @@ module pv_audio_top #(
     output reg         s_axi_rvalid,
     input  wire        s_axi_rready,
 
-    // AXI4-Stream from DMA MM2S (file playback): sample in tdata[15:0]
+    // AXI4-Stream from DMA MM2S
     input  wire [31:0] s_axis_mm2s_tdata,
     input  wire [3:0]  s_axis_mm2s_tkeep,
     input  wire        s_axis_mm2s_tlast,
     input  wire        s_axis_mm2s_tvalid,
     output wire        s_axis_mm2s_tready,
 
-    // AXI4-Stream to DMA S2MM (capture of what goes to the speaker)
+    // AXI4-Stream to DMA S2MM 
     output reg  [31:0] m_axis_s2mm_tdata,
     output wire [3:0]  m_axis_s2mm_tkeep,
     output reg         m_axis_s2mm_tlast,
@@ -83,12 +55,11 @@ module pv_audio_top #(
     output wire [1:0]  au_addr
 );
     localparam N = 1 << LOGN;
-    localparam [31:0] VERSION = 32'h5056_0100;   // "PV" v1.0
+    localparam [31:0] VERSION = 32'h5056_0100;
 
     wire rst = ~aresetn;
-    assign au_addr = 2'b11;                       // ADAU1761 I2C address 0x3B
+    assign au_addr = 2'b11; 
 
-    // =================================================================== regs
     reg        dsp_en, autotune_en, src_dma, eq_en, gate_en, mute, cap_wait_dma;
     reg [1:0]  in_ch;
     reg        soft_rst, cap_arm;
@@ -167,7 +138,8 @@ module pv_audio_top #(
         end
     end
 
-    // ================================================================= codec
+
+
     wire [23:0] rx_l, rx_r;
     wire        tick;
     reg  [23:0] tx_word;
@@ -180,7 +152,7 @@ module pv_audio_top #(
         .tx_left(tx_word), .tx_right(tx_word)
     );
 
-    // ========================================================== input select
+
     wire signed [24:0] lr_sum = $signed(rx_l) + $signed(rx_r);
     wire signed [15:0] codec_in = (in_ch == 2'd1) ? rx_l[23:8] :
                                   (in_ch == 2'd2) ? rx_r[23:8] : lr_sum[24:9];
@@ -189,7 +161,7 @@ module pv_audio_top #(
     wire signed [15:0] dma_in = s_axis_mm2s_tvalid ? s_axis_mm2s_tdata[15:0] : 16'sd0;
     wire signed [15:0] in_sample = src_dma ? dma_in : codec_in;
 
-    // ================================================================ DSP core
+
     wire signed [15:0] core_out;
     wire [31:0] frame_cnt, det_f0, det_target, det_ratio, underflow_cnt, overrun_cnt;
     wire [23:0] det_level;
@@ -213,7 +185,7 @@ module pv_audio_top #(
         .dbg_push(), .dbg_push_data()
     );
 
-    // ============================================ output: bypass, gain, mute
+
     reg  signed [15:0] y0;
     reg  signed [32:0] y_prod;
     reg  [1:0]         yv;
@@ -246,7 +218,7 @@ module pv_audio_top #(
         end
     end
 
-    // ====================================================== counters / meters
+
     reg [31:0] sample_cnt, dma_in_cnt, dma_starve_cnt;
     reg [15:0] in_pk, out_pk, in_pk_l, out_pk_l;
     reg [11:0] pk_cnt;
@@ -282,9 +254,8 @@ module pv_audio_top #(
     end
     wire codec_alive = (alive_cnt != 17'h1FFFF);
 
-    // ===================================================== S2MM capture
-    // With "wait for DMA" the capture starts exactly on the output sample that
-    // belongs to the first file sample, so software needs no latency guessing.
+
+
     localparam C_IDLE = 2'd0, C_WAIT = 2'd1, C_RUN = 2'd2, C_ALIGN = 2'd3;
     reg [1:0]  cst;
     reg [31:0] cap_left, cap_cnt, cap_drop, cap_mark;
@@ -327,7 +298,7 @@ module pv_audio_top #(
     end
     wire cap_busy = (cst != C_IDLE) || m_axis_s2mm_tvalid;
 
-    // ================================================================ reads
+
     assign s_axi_arready = s_axi_arvalid && !s_axi_rvalid;
 
     always @(posedge aclk) begin

@@ -1,17 +1,6 @@
 `timescale 1ns / 1ps
 `default_nettype none
-// ============================================================================
-// pv_i2s: I2S interface to the ADAU1761 on the PYNQ-Z2.
-//
-// The codec is the I2S master (same as the PYNQ base overlay): the FPGA only
-// supplies a 10 MHz MCLK, the codec PLL turns it into 49.152 MHz and drives
-// BCLK = 64*fs and LRCLK = fs = 48 kHz. Everything here runs on the 100 MHz
-// system clock; BCLK/LRCLK/SDATA are oversampled through 2-FF synchronisers.
-//
-// Philips I2S: MSB one BCLK after the LRCLK edge, LRCLK low = left, 24 data
-// bits per 32-bit slot. rx_valid pulses once per frame after the right
-// channel is complete; that pulse is the system's audio sample tick.
-// ============================================================================
+
 module pv_i2s (
     input  wire        clk,            // 100 MHz
     input  wire        rst,
@@ -28,7 +17,6 @@ module pv_i2s (
     input  wire [23:0] tx_left,
     input  wire [23:0] tx_right
 );
-    // ---------------------------------------------------------------- MCLK
     reg [2:0] mdiv;
     always @(posedge clk) begin
         if (rst) begin
@@ -42,7 +30,7 @@ module pv_i2s (
         end
     end
 
-    // ------------------------------------------------------- synchronisers
+ 
     (* ASYNC_REG = "TRUE" *) reg [2:0] bclk_s;
     (* ASYNC_REG = "TRUE" *) reg [1:0] lr_s, sd_s;
     always @(posedge clk) begin
@@ -55,7 +43,7 @@ module pv_i2s (
     wire lr   = lr_s[1];
     wire sd   = sd_s[1];
 
-    // ----------------------------------------------------------- receiver
+    
     reg        lr_prev;
     reg [5:0]  bitcnt;
     reg [23:0] rx_sh;
@@ -74,8 +62,7 @@ module pv_i2s (
             if (rise) begin
                 lr_prev <= lr;
                 if (lr != lr_prev) begin
-                    // LRCLK changed: this bit is the tail of the previous slot,
-                    // the MSB of the new slot comes on the next rising edge.
+    
                     bitcnt <= 6'd0;
                     tx_sh  <= lr ? tx_right : tx_left;
                 end else if (bitcnt != 6'd63) begin
@@ -93,7 +80,7 @@ module pv_i2s (
                     end
                 end
             end
-            // transmitter: change data on the falling edge, codec samples on rising
+            
             if (fall) begin
                 sdata_out <= tx_sh[23];
                 tx_sh     <= {tx_sh[22:0], 1'b0};

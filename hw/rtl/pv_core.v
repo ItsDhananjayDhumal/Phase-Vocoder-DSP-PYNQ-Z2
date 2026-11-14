@@ -1,26 +1,6 @@
 `timescale 1ns / 1ps
 `default_nettype none
-// ============================================================================
-// pv_core: real-time phase-vocoder autotune (PS.pdf steps 2-11 in hardware)
-//
-// Every H = N/4 input samples (75 % overlap) one frame is processed:
-//
-//   LOAD    last N samples x Hann window -> FFT memory (bit-reversed)     [2]
-//   FFT     forward, scaled 1/N                                           [3]
-//   ANA     CORDIC rect->polar, phase unwrapping -> instantaneous freq    [4,8]
-//   PITCH   lowest strong spectral peak -> f0, tuning-table lookup,
-//           ratio S = target/f0, retune smoothing, x manual shift         [5,6]
-//   SYNTH   target bin j <- source j/S: linear magnitude interpolation,
-//           synthesis phase += S*omega, spectral gate, freq-sampling EQ,
-//           CORDIC polar->rect, Hermitian mirror                          [7,8,9]
-//   IFFT    inverse, unscaled                                             [10]
-//   OLA     synthesis window, overlap-add, H finished samples -> FIFO     [11]
-//
-// A frame takes about 55k clocks at 100 MHz (0.55 ms), much less than the
-// 10.7 ms hop. Output samples leave the FIFO one per audio tick.
-// Fixed-point formats are documented in model/pv_params.py; model/pv_model.py
-// is the golden reference.
-// ============================================================================
+
 module pv_core #(
     parameter LOGN        = 11,
     parameter WIN_A       = "win_analysis.mem",
@@ -32,7 +12,7 @@ module pv_core #(
     parameter PRIME_DELAY = 32
 )(
     input  wire               clk,
-    input  wire               rst,            // sync, active high (also soft reset)
+    input  wire               rst,    
 
     // audio stream, one sample per tick
     input  wire               tick,
@@ -43,18 +23,18 @@ module pv_core #(
     input  wire               autotune_en,
     input  wire               eq_en,
     input  wire               gate_en,
-    input  wire [31:0]        manual_ratio,   // Q16.16
-    input  wire [16:0]        alpha,          // Q0.16, 65536 = instant retune
-    input  wire [15:0]        peak_thr,       // Q0.16 fraction of the strongest peak
-    input  wire [23:0]        voice_thr,      // minimum peak magnitude for "voiced"
-    input  wire [23:0]        gate_thr,       // spectral gate threshold
+    input  wire [31:0]        manual_ratio,   
+    input  wire [16:0]        alpha,          
+    input  wire [15:0]        peak_thr,       
+    input  wire [23:0]        voice_thr,      
+    input  wire [23:0]        gate_thr,       
     input  wire [LOGN-1:0]    kmin,
     input  wire [LOGN-1:0]    kmax,
     input  wire [7:0]         note_cnt,
 
-    // table write ports (from AXI)
+    
     input  wire               note_we,
-    input  wire [7:0]         note_waddr,     // {entry[6:0], 0=freq / 1=upper}
+    input  wire [7:0]         note_waddr,     
     input  wire [31:0]        note_wdata,
     input  wire               eq_we,
     input  wire [LOGN-1:0]    eq_waddr,
@@ -62,20 +42,20 @@ module pv_core #(
 
     // telemetry
     output reg  [31:0]        frame_cnt,
-    output reg  [31:0]        det_f0,         // Q.14 bins (0 when unvoiced)
-    output reg  [31:0]        det_target,     // Q.14 bins
-    output reg  [31:0]        det_ratio,      // Q16.16 total pitch ratio applied
-    output reg  [23:0]        det_level,      // strongest peak magnitude
+    output reg  [31:0]        det_f0,        
+    output reg  [31:0]        det_target,    
+    output reg  [31:0]        det_ratio,     
+    output reg  [23:0]        det_level,     
     output reg                det_voiced,
     output reg  [LOGN-1:0]    det_bin,
     output reg  [31:0]        underflow_cnt,
     output reg  [31:0]        overrun_cnt,
     output wire               primed,
     output wire               busy,
-    output reg  [31:0]        in_idx,         // index of the sample accepted at the current tick
-    output reg  [31:0]        out_idx,        // stream index of out_sample (input index + N - H)
+    output reg  [31:0]        in_idx,        
+    output reg  [31:0]        out_idx,       
 
-    // FIFO push stream (for the testbench)
+    
     output reg                dbg_push,
     output reg  signed [15:0] dbg_push_data
 );
@@ -83,8 +63,8 @@ module pv_core #(
     localparam H     = N / 4;
     localparam HALF  = N / 2;
     localparam DW    = 24;
-    localparam OMW   = 27;              // omega width (signed, Q.14 bins)
-    localparam OLW   = 28;              // overlap-add accumulator width
+    localparam OMW   = 27;              
+    localparam OLW   = 28;              
     localparam [31:0] ONE  = 32'd65536;
     localparam [31:0] RMIN = 32'd32768;
     localparam [31:0] RMAX = 32'd131071;
@@ -97,9 +77,7 @@ module pv_core #(
         end
     endfunction
 
-    // ===================================================================
-    // FSM
-    // ===================================================================
+
     localparam S_CLEAR  = 5'd0,  S_IDLE   = 5'd1,  S_LOAD   = 5'd2,  S_FFT    = 5'd3,
                S_ANA    = 5'd4,  S_PTHR   = 5'd5,  S_PSCAN  = 5'd6,  S_PF0    = 5'd7,
                S_PF0W   = 5'd8,  S_NRD    = 5'd9,  S_NCMP   = 5'd10, S_DIV1   = 5'd11,
@@ -110,9 +88,7 @@ module pv_core #(
 
     assign busy = (st != S_IDLE);
 
-    // ===================================================================
-    // Input ring buffer and hop scheduler
-    // ===================================================================
+
     reg  [LOGN-1:0] wp;
     reg  [LOGN-3:0] hop_cnt;
     reg             hop_pending;
@@ -150,10 +126,7 @@ module pv_core #(
         .addr_b(base + ld_n), .we_b(1'b0), .din_b(16'd0), .dout_b(inbuf_q)
     );
 
-    // ===================================================================
-    // Memories
-    // ===================================================================
-    // FFT engine ports (driven per phase below)
+
     reg  [LOGN-1:0] fa_addr, fb_addr;
     reg             fa_we, fb_we;
     reg  [2*DW-1:0] fa_din, fb_din;
@@ -234,9 +207,7 @@ module pv_core #(
         .addr_b(ol_ab), .we_b(ol_wb), .din_b(ol_din), .dout_b()
     );
 
-    // ===================================================================
-    // CORDICs
-    // ===================================================================
+
     reg              an_v1 = 1'b0;     // analysis read pipeline (FFT RAM -> CORDIC)
     reg  [LOGN-1:0]  an_k1;
     wire             cv_v;
@@ -260,9 +231,7 @@ module pv_core #(
         .out_valid(cr_v), .out_re(cr_re), .out_im(cr_im), .out_tag(cr_t)
     );
 
-    // ===================================================================
-    // Divider (ratio and its reciprocal)
-    // ===================================================================
+
     reg         div_start;
     reg  [47:0] div_num;
     reg  [31:0] div_den;
@@ -273,9 +242,7 @@ module pv_core #(
         .done(div_done), .quot(div_q)
     );
 
-    // ===================================================================
-    // Datapath registers
-    // ===================================================================
+
     reg  [LOGN:0]   cnt;                // generic issue counter (needs N)
     reg  [LOGN-1:0] obase;
 
@@ -414,9 +381,7 @@ module pv_core #(
         endcase
     end
 
-    // ===================================================================
-    // Main sequencer
-    // ===================================================================
+
     always @(posedge clk) begin
         fft_start <= 1'b0;
         div_start <= 1'b0;
@@ -444,7 +409,6 @@ module pv_core #(
             fft_inv    <= 1'b0;
         end else begin
             case (st)
-                // ------------------------------------------------ clear state
                 S_CLEAR: begin
                     cnt <= cnt + 1'b1;
                     if (cnt == N - 1) st <= S_IDLE;
@@ -458,7 +422,7 @@ module pv_core #(
                     end
                 end
 
-                // ----------------------------------- window and load into FFT
+
                 S_LOAD: begin
                     if (cnt < N) cnt <= cnt + 1'b1;
                     ld_v    <= {ld_v[0], (cnt < N)};
@@ -480,7 +444,7 @@ module pv_core #(
                     st   <= S_ANA;
                 end
 
-                // ------------------------- analysis: polar form + inst. freq.
+
                 S_ANA: begin
                     if (cnt <= HALF) cnt <= cnt + 1'b1;
                     an_v1   <= (cnt <= HALF);
@@ -498,7 +462,7 @@ module pv_core #(
                     end
                 end
 
-                // ------------------------------------------- pitch detection
+
                 S_PTHR: begin
                     thr_prod <= gmax * peak_thr;
                     cnt      <= kmin - 1'b1;
@@ -535,7 +499,7 @@ module pv_core #(
                     st     <= S_NRD;
                 end
 
-                // --------------------------------------- tuning table lookup
+
                 S_NRD: begin
                     if (!voiced) begin
                         target <= 32'd0;
@@ -569,13 +533,13 @@ module pv_core #(
                     st     <= S_SM1;
                 end
 
-                // ------------------------- retune smoothing and manual shift
+
                 S_SM1: begin
                     sm_prod <= ($signed({1'b0, s_auto}) - $signed({1'b0, ratio_s})) * $signed({1'b0, alpha});
                     st      <= S_SM2;
                 end
                 S_SM2: begin
-                    // snap once the step rounds to zero so the ratio can settle exactly
+
                     ratio_s <= (sm_prod[50:16] == 0 || sm_prod[50:16] == {35{1'b1}}) ? s_auto
                                                                                 : ratio_s + sm_prod[47:16];
                     st      <= S_MAN1;
@@ -605,35 +569,35 @@ module pv_core #(
                     st         <= S_SYNTH;
                 end
 
-                // ------------------------------------- spectral resynthesis
+
                 S_SYNTH: begin
-                    // s0: issue bin j and form its source position p = j / S
+
                     sv[0] <= (cnt <= HALF);
                     if (cnt <= HALF) cnt <= cnt + 1'b1;
                     s0_p  <= cnt[LOGN-1:0] * inv;
                     s0_j  <= cnt[LOGN-1:0];
                     sv[6:1] <= sv[5:0];
-                    // s1: RAM reads (addresses steered combinationally)
+
                     s1_j  <= s0_j;  s1_in <= s1_inside;  s1_F <= s0_p[15:0];
-                    // s2: capture RAM outputs
+
                     s2_j  <= s1_j;  s2_in <= s1_in;  s2_F <= s1_F;
                     s2_m0 <= mag_qa;  s2_m1 <= mag_qb;  s2_om <= om_q;
                     s2_ph <= ph_qa;   s2_sy <= sy_qa;   s2_eq <= eq_q;
-                    // s3: interpolation and frequency-scaling products
+
                     s3_j  <= s2_j;  s3_in <= s2_in;  s3_m0 <= s2_m0;
                     s3_ph <= s2_ph; s3_sy <= s2_sy;  s3_eq <= s2_eq;
                     s3_pf <= s2_diff * $signed({1'b0, s2_F});
                     s3_pw <= s2_om * $signed({1'b0, s_tot[17:0]});
-                    // s4: interpolated magnitude, accumulated phase (written back)
+
                     s4_j   <= s3_j;
                     s4_mag <= s3_in ? s4_mt[DW-1:0] : {DW{1'b0}};
                     s4_ph  <= s4_newph;
                     s4_eq  <= s3_eq;
-                    // s5: noise gate, EQ product
+
                     s5_j  <= s4_j;  s5_ph <= s4_ph;
                     s5_g  <= s5_gated;
                     s5_pe <= s5_gated * s4_eq;
-                    // s6 -> CORDIC rotation
+
                     cr_in_v   <= sv[5];
                     cr_in_mag <= s6_mag;
                     cr_in_ph  <= s5_ph;
@@ -653,7 +617,7 @@ module pv_core #(
                     st  <= S_OLA;
                 end
 
-                // ----------------------------- synthesis window + overlap-add
+
                 S_OLA: begin
                     ov[0] <= (cnt < N);
                     if (cnt < N) cnt <= cnt + 1'b1;
@@ -682,9 +646,6 @@ module pv_core #(
         end
     end
 
-    // ===================================================================
-    // Output FIFO and sample-rate playback
-    // ===================================================================
     reg  [LOGN-1:0] f_wp, f_rp;
     reg  [LOGN:0]   f_cnt;
     reg  [1:0]      ost;

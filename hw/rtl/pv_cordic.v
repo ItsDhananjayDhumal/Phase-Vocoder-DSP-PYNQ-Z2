@@ -1,19 +1,9 @@
 `timescale 1ns / 1ps
 `default_nettype none
-// ============================================================================
-// Pipelined CORDIC engines (PS.pdf Block B), one sample per clock.
-//
-// Angles are binary angles (BAM): 2^32 = 2*pi internally, 16-bit at the ports
-// (65536 = 2*pi). Wrap-around is then free, which is what makes the phase
-// unwrapping in pv_core a plain 16-bit subtraction.
-// ============================================================================
 
-// ----------------------------------------------------------------------------
-// Vectoring mode: (x, y) -> (|x + jy|, atan2(y, x)).  Latency = ITER + 3.
-// ----------------------------------------------------------------------------
 module pv_cordic_vec #(
-    parameter IW   = 24,   // input width (signed)
-    parameter TAGW = 11,   // side-band tag carried alongside each sample
+    parameter IW   = 24,   
+    parameter TAGW = 11,   
     parameter ITER = 18
 )(
     input  wire                 clk,
@@ -27,8 +17,8 @@ module pv_cordic_vec #(
     output reg  [TAGW-1:0]      out_tag
 );
     localparam W   = 32;
-    localparam PRE = 6;          // extra fractional bits for angle precision
-    localparam KQ  = 79594;      // round(0.607252935 * 2^17)
+    localparam PRE = 6;         
+    localparam KQ  = 79594;     
 
     `include "pv_atan.vh"
 
@@ -43,7 +33,7 @@ module pv_cordic_vec #(
 
     integer k;
     always @(posedge clk) begin
-        // Stage 0: move the vector into the right half-plane.
+        
         vs[0] <= in_valid;
         ts[0] <= in_tag;
         if (in_x[IW-1]) begin
@@ -55,7 +45,7 @@ module pv_cordic_vec #(
             ys[0] <= y_ext;
             zs[0] <= 32'h0000_0000;
         end
-        // Micro-rotations driving y to zero.
+        
         for (k = 0; k < ITER; k = k + 1) begin
             vs[k+1] <= vs[k];
             ts[k+1] <= ts[k];
@@ -71,7 +61,7 @@ module pv_cordic_vec #(
         end
     end
 
-    // Gain compensation and output rounding.
+    
     reg signed [W+17:0] prod;
     reg [31:0]          z_p;
     reg                 v_p = 1'b0;
@@ -93,9 +83,7 @@ module pv_cordic_vec #(
     end
 endmodule
 
-// ----------------------------------------------------------------------------
-// Rotation mode: (mag, phase) -> (mag*cos, mag*sin).  Latency = ITER + 3.
-// ----------------------------------------------------------------------------
+
 module pv_cordic_rot #(
     parameter MW   = 24,   // unsigned magnitude width
     parameter OW   = 24,   // signed output width
@@ -135,14 +123,14 @@ module pv_cordic_rot #(
 
     integer k;
     always @(posedge clk) begin
-        // Stage A: pre-scale by K and fold the angle into [-pi/2, pi/2).
+
         pa_v    <= in_valid;
         pa_t    <= in_tag;
         pa_prod <= in_mag * KQ[16:0];
         pa_flip <= z_in[31] ^ z_in[30];
         pa_z    <= (z_in[31] ^ z_in[30]) ? (z_in ^ 32'h8000_0000) : z_in;
 
-        // Stage B: initial vector.
+
         vs[0] <= pa_v;
         ts[0] <= pa_t;
         zs[0] <= pa_z;
@@ -179,9 +167,7 @@ module pv_cordic_rot #(
     end
 endmodule
 
-// ----------------------------------------------------------------------------
-// Sequential restoring divider: quot = num / den (unsigned), NW cycles.
-// ----------------------------------------------------------------------------
+
 module pv_udiv #(
     parameter NW = 48,
     parameter DW = 32

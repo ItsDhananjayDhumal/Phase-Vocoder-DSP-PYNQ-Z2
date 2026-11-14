@@ -1,20 +1,6 @@
 `timescale 1ns / 1ps
 `default_nettype none
-// ============================================================================
-// pv_fft: in-place radix-2 decimation-in-time FFT/IFFT (PS.pdf Blocks A and E)
-//
-//  * Data must be loaded at bit-reversed addresses; the result comes out in
-//    natural order. The memory is reached through the two external ports
-//    while the engine is idle.
-//  * One butterfly every 2 clocks: on even cycles both BRAM ports read the
-//    butterfly operands; the 5-stage butterfly pipeline writes results back
-//    on odd cycles, so the ports never collide. The pipeline drains between
-//    stages. N=2048 takes about 11 * (2*1024 + 8) = 22.6k cycles.
-//  * Forward (inverse=0) uses W = cos - j*sin, inverse uses W = cos + j*sin.
-//  * scale=1 halves every stage (overall 1/N, no overflow); scale=0 is
-//    unscaled with saturation.
-//  Memory word = {re[DW-1:0], im[DW-1:0]}.
-// ============================================================================
+
 module pv_fft #(
     parameter LOGN   = 11,
     parameter DW     = 24,
@@ -41,7 +27,6 @@ module pv_fft #(
     localparam TW  = 18;                  // twiddle width, 1.0 = 2^16
     localparam AW  = DW + 4;              // butterfly sum width
 
-    // ---------------------------------------------------------------- control
     localparam S_IDLE = 2'd0, S_RUN = 2'd1, S_DRAIN = 2'd2;
     reg [1:0]       state = S_IDLE;
     reg [3:0]       stage;
@@ -103,11 +88,11 @@ module pv_fft #(
         end
     end
 
-    // --------------------------------------------------------------- twiddles
+    
     wire [2*TW-1:0] tw_q;
     pv_rom #(.AW(NB), .DW(2*TW), .INIT(TWINIT)) u_tw (.clk(clk), .addr(tw_a), .dout(tw_q));
 
-    // ------------------------------------------------------------------ memory
+    
     reg  [LOGN-1:0] wa0, wa1, wa2, wa3, wa4;   // i0 pipeline
     reg  [LOGN-1:0] wb0, wb1, wb2, wb3, wb4;   // i1 pipeline
     reg  [4:0]      vp = 5'd0;                 // valid pipeline
@@ -130,8 +115,7 @@ module pv_fft #(
     assign ea_dout = qa;
     assign eb_dout = qb;
 
-    // ---------------------------------------------------------- butterfly pipe
-    // t0 read issue | t1 BRAM out | t2 regs | t3 products | t4 t=W*b | t5 write
+    
     reg signed [DW-1:0]   a_re1, a_im1, b_re1, b_im1;
     reg signed [TW-1:0]   w_re1, w_im1;
     reg signed [DW-1:0]   a_re2, a_im2, a_re3, a_im3;
@@ -170,27 +154,30 @@ module pv_fft #(
         wa0 <= i0;  wa1 <= wa0; wa2 <= wa1; wa3 <= wa2; wa4 <= wa3;
         wb0 <= i1;  wb1 <= wb0; wb2 <= wb1; wb3 <= wb2; wb4 <= wb3;
 
-        // t1 -> t2: capture operands and twiddle
+    
         a_re1 <= qa[2*DW-1:DW];  a_im1 <= qa[DW-1:0];
         b_re1 <= qb[2*DW-1:DW];  b_im1 <= qb[DW-1:0];
         w_re1 <= tw_cos;
         w_im1 <= inv_r ? tw_sin : -tw_sin;
 
-        // t2 -> t3: complex multiply partial products
+    
         m_rr  <= b_re1 * w_re1;
         m_ii  <= b_im1 * w_im1;
         m_ri  <= b_re1 * w_im1;
         m_ir  <= b_im1 * w_re1;
         a_re2 <= a_re1;  a_im2 <= a_im1;
 
-        // t3 -> t4: t = W * b (rounded back to data scale)
+    
         t_re  <= s_re >>> 16;
         t_im  <= s_im >>> 16;
         a_re3 <= a_re2;  a_im3 <= a_im2;
 
-        // t4 -> t5: butterfly
+    
         y0_q  <= {fin(sum0, scale_r), fin(sum1, scale_r)};
         y1_q  <= {fin(dif0, scale_r), fin(dif1, scale_r)};
+    
+    
     end
+
 endmodule
 `default_nettype wire

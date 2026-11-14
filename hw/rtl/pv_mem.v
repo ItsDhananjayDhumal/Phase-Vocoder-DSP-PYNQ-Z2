@@ -1,11 +1,6 @@
 `timescale 1ns / 1ps
 `default_nettype none
-// ============================================================================
-// Block-RAM primitives for the phase-vocoder core (Vivado inference templates).
-// All reads are synchronous with one cycle of latency.
-// ============================================================================
 
-// True dual-port RAM: two independent read/write ports.
 module pv_tdp_ram #(
     parameter AW   = 11,
     parameter DW   = 16,
@@ -42,7 +37,6 @@ module pv_tdp_ram #(
     end
 endmodule
 
-// Single-port ROM initialised from a hex file.
 module pv_rom #(
     parameter AW   = 11,
     parameter DW   = 16,
