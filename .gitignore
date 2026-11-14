@@ -1,24 +1,14 @@
-# Vivado generated/regeneratable build products
-RTL Part/RTL Part.cache/
-RTL Part/RTL Part.gen/
-RTL Part/RTL Part.hw/
-RTL Part/RTL Part.ip_user_files/
-RTL Part/RTL Part.runs/
-RTL Part/RTL Part.sim/
-RTL Part/.Xil/
-RTL Part/*.jou
-RTL Part/*.log
-RTL Part/*.str
-RTL Part/*.zip
-RTL Part/vivado_pid*.str
-RTL Part/NA/
+# Vivado logs
+vivado*.jou
+vivado*.log
+xsim*
+xelab.*
+xvlog.*
+hs_err_pid*
 *.backup.log
 *.backup.jou
 webtalk*.log
 webtalk*.jou
-
-# Redundant backup archive of the RTL project
-RTL Part.zip
 
 # Editor / OS cruft
 .DS_Store
@@ -34,3 +24,13 @@ Thumbs.db
 *.synctex.gz
 *.fls
 *.fdb_latexmk
+
+# New flow (hw/, sw/): build products
+hw/build/
+hw/vivado_build/
+hw/sim/work/
+hw/*.log
+hw/build_done.txt
+**/__pycache__/
+.Xil/
+hw/vivado_build_core/

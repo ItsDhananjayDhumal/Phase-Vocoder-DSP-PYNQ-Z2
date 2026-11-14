@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PYNQ Autotune</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <svg viewBox="0 0 24 24" class="logo" aria-hidden="true"><path d="M2 12h3l2-6 3 12 3-9 2 5 2-2h5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <div>
+      <h1>Phase Vocoder Autotune</h1>
+      <p class="sub">PYNQ-Z2 &middot; real-time FPGA DSP core &middot; Gaydecki-style signal chain</p>
+    </div>
+  </div>
+  <div class="pills">
+    <span class="pill" id="pill-conn">connecting&hellip;</span>
+    <span class="pill" id="pill-codec">codec</span>
+    <span class="pill" id="pill-rate">0 frames/s</span>
+  </div>
+</header>
+
+<main>
+  <section class="modes" aria-label="Audio routing mode">
+    <button class="mode" data-mode="mic">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+      <span class="mode-title">Mic &rarr; Speaker</span>
+      <span class="mode-desc">Headset mic and speaker both on the <b>HP+MIC</b> jack</span>
+    </button>
+    <button class="mode" data-mode="line">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M8 20h8M12 16v4"/></svg>
+      <span class="mode-title">Laptop &rarr; Speaker</span>
+      <span class="mode-desc">Laptop into <b>LINE IN</b>, speaker on <b>HP+MIC</b></span>
+    </button>
+    <button class="mode" data-mode="file">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M10 17a1.5 1.5 0 1 1-1.5-1.5H10V11l4-1"/></svg>
+      <span class="mode-title">Audio file &rarr; Speaker</span>
+      <span class="mode-desc">Upload a .wav; the FPGA processes it and plays it on <b>HP+MIC</b></span>
+    </button>
+  </section>
+
+  <section class="chain" aria-label="Signal chain">
+    <div class="blk fixed" id="blk-in"><small>input</small><b id="chain-in">LINE IN</b></div>
+    <i class="arrow"></i>
+    <div class="blk fixed"><small>analysis</small><b>Hann + FFT</b></div>
+    <i class="arrow"></i>
+    <div class="blk fixed"><small>CORDIC</small><b>Pitch detect</b></div>
+    <i class="arrow"></i>
+    <button class="blk tog" data-toggle="autotune"><small>phase vocoder</small><b>Autotune</b></button>
+    <i class="arrow"></i>
+    <button class="blk tog" data-toggle="gate"><small>spectral</small><b>Noise gate</b></button>
+    <i class="arrow"></i>
+    <button class="blk tog" data-toggle="eq"><small>freq. sampling</small><b>EQ filter</b></button>
+    <i class="arrow"></i>
+    <div class="blk fixed"><small>synthesis</small><b>IFFT + OLA</b></div>
+    <i class="arrow"></i>
+    <button class="blk tog" data-toggle="mute" data-invert="1"><small>output</small><b>Gain</b></button>
+    <i class="arrow"></i>
+    <div class="blk fixed"><small>output</small><b>HP+MIC</b></div>
+    <button class="bypass" id="bypass" title="Dry bypass for A/B comparison">DSP on</button>
+  </section>
+
+  <div class="grid">
+    <section class="card pitch">
+      <h2>Live pitch</h2>
+      <div class="pitch-row">
+        <div class="note-box">
+          <div class="note" id="note">&ndash;</div>
+          <div class="cents"><div class="needle" id="needle"></div></div>
+          <div class="kv"><span>sung</span><b id="f0">&ndash;</b></div>
+          <div class="kv"><span>target</span><b id="target">&ndash;</b></div>
+          <div class="kv"><span>correction</span><b id="corr">&ndash;</b></div>
+        </div>
+        <canvas id="trace" height="210" aria-label="Pitch trace"></canvas>
+      </div>
+      <div class="legend"><span class="sw sw-in"></span>detected &nbsp; <span class="sw sw-out"></span>output &nbsp; <span class="sw sw-grid"></span>scale notes</div>
+    </section>
+
+    <section class="card">
+      <h2>Autotune</h2>
+      <div class="row2">
+        <label>Key <select id="key"></select></label>
+        <label>Scale <select id="scale"></select></label>
+      </div>
+      <label class="slider">Retune speed <output id="retune-v"></output>
+        <input type="range" id="retune_ms" min="0" max="400" step="5"></label>
+      <label class="slider">Pitch shift <output id="shift-v"></output>
+        <input type="range" id="shift" min="-12" max="12" step="1"></label>
+      <label class="slider">Reference A4 <output id="a4-v"></output>
+        <input type="range" id="a4" min="415" max="466" step="1"></label>
+      <p class="hint">Speed 0 ms = hard, robotic snapping. Larger values glide naturally. Pitch shift is applied on top of the correction.</p>
+    </section>
+
+    <section class="card file">
+      <h2>Audio file</h2>
+      <label class="drop" id="drop">
+        <input type="file" id="file-in" accept=".wav,audio/wav">
+        <span id="drop-text">Drop a .wav here or <u>choose a file</u></span>
+      </label>
+      <div class="file-actions">
+        <button id="play" class="primary" disabled>Process &amp; play</button>
+        <button id="stop" disabled>Stop</button>
+      </div>
+      <div class="progress"><div id="prog"></div></div>
+      <p class="hint" id="file-msg">The file streams through the FPGA at 48 kHz via DMA. The processed result is captured for download.</p>
+      <audio id="player" controls hidden></audio>
+      <a id="download" class="btn" href="/api/processed.wav" hidden>Download processed .wav</a>
+    </section>
+
+    <section class="card eq">
+      <h2>EQ filter <small>(Gaydecki frequency-sampling method)</small></h2>
+      <div class="row2">
+        <label>Response <select id="eq-type">
+          <option value="flat">Flat</option><option value="lowpass">Low-pass</option>
+          <option value="highpass">High-pass</option><option value="bandpass">Band-pass</option>
+          <option value="bandstop">Band-stop</option><option value="presence">Voice presence</option>
+          <option value="telephone">Telephone</option><option value="graphic">Graphic EQ</option>
+        </select></label>
+        <label class="toggle"><input type="checkbox" id="eq-on"> enabled</label>
+      </div>
+      <div id="eq-params"></div>
+      <canvas id="eq-plot" height="150" aria-label="EQ magnitude response"></canvas>
+      <canvas id="eq-ir" height="70" aria-label="Equivalent FIR impulse response"></canvas>
+      <p class="hint">H[k] is written to the FPGA and multiplies every STFT bin. The lower plot is the equivalent windowed FIR, h[n] = w[n]&middot;IDFT{H}.</p>
+    </section>
+
+    <section class="card io">
+      <h2>Levels &amp; output</h2>
+      <div class="meter"><span>in</span><div class="bar"><div id="m-in"></div></div><b id="db-in">&ndash;</b></div>
+      <div class="meter"><span>out</span><div class="bar"><div id="m-out"></div></div><b id="db-out">&ndash;</b></div>
+      <label class="slider">Input gain <output id="ing-v"></output>
+        <input type="range" id="input_gain_db" min="-12" max="35" step="1"></label>
+      <label class="slider">Output gain <output id="gain-v"></output>
+        <input type="range" id="gain_db" min="-30" max="12" step="0.5"></label>
+      <label class="slider">Headphone volume <output id="hp-v"></output>
+        <input type="range" id="hp_db" min="-40" max="6" step="1"></label>
+      <label class="slider">Noise gate threshold <output id="gate-v"></output>
+        <input type="range" id="gate_thr" min="0" max="2000" step="10"></label>
+      <div class="row2">
+        <label>Input channel <select id="in_ch"><option>L+R</option><option>L</option><option>R</option></select></label>
+        <label class="toggle"><input type="checkbox" id="mute"> mute</label>
+      </div>
+    </section>
+  </div>
+</main>
+
+<footer id="foot"></footer>
+<script src="app.js"></script>
+</body>
+</html>
